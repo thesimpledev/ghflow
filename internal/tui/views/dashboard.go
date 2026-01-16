@@ -19,13 +19,14 @@ const (
 )
 
 type DashboardModel struct {
-	config      *config.Config
-	grid        components.Grid
+	config       *config.Config
+	grid         components.Grid
 	commandInput components.CommandInput
-	mode        InputMode
-	width       int
-	height      int
-	err         error
+	mode         InputMode
+	width        int
+	height       int
+	err          error
+	profileName  string // Current loaded profile name
 }
 
 // Messages
@@ -44,6 +45,7 @@ func NewDashboardModel(cfg *config.Config) DashboardModel {
 		grid:         components.NewGrid(cfg.Repos),
 		commandInput: components.NewCommandInput(cfg.Repos),
 		mode:         ModeGrid,
+		profileName:  cfg.ProfileName,
 	}
 }
 
@@ -67,7 +69,15 @@ func (m DashboardModel) SetSize(width, height int) DashboardModel {
 }
 
 func (m DashboardModel) Init() tea.Cmd {
-	return m.grid.Init()
+	return tea.Batch(m.grid.Init(), m.setWindowTitle())
+}
+
+func (m DashboardModel) setWindowTitle() tea.Cmd {
+	title := "ghflow"
+	if m.profileName != "" {
+		title = "ghflow: " + m.profileName
+	}
+	return tea.SetWindowTitle(title)
 }
 
 func (m DashboardModel) Update(msg tea.Msg) (DashboardModel, tea.Cmd) {
@@ -190,9 +200,12 @@ func (m DashboardModel) handleCommand(cmd components.Command) (DashboardModel, t
 	case components.CmdSave:
 		if cmd.Arg != "" {
 			m.config.SaveProfile(cmd.Arg)
+			m.profileName = cmd.Arg
+			m.config.ProfileName = cmd.Arg
+			m.config.Save()
 		}
 		m.mode = ModeGrid
-		return m, nil
+		return m, m.setWindowTitle()
 
 	case components.CmdLoad:
 		if cmd.Arg != "" {
@@ -200,14 +213,16 @@ func (m DashboardModel) handleCommand(cmd components.Command) (DashboardModel, t
 			if err == nil && loadedCfg != nil {
 				// Replace current config with loaded profile
 				m.config.Repos = loadedCfg.Repos
+				m.config.ProfileName = cmd.Arg
 				m.config.Save() // Save as current config too
+				m.profileName = cmd.Arg
 
 				// Rebuild grid with loaded repos
 				m.grid = components.NewGrid(m.config.Repos)
 				m.grid = m.grid.SetSize(m.width, m.height-6)
 				m.commandInput = m.commandInput.SetRepos(m.config.Repos)
 				m.mode = ModeGrid
-				return m, m.grid.Init()
+				return m, tea.Batch(m.grid.Init(), m.setWindowTitle())
 			}
 		}
 		m.mode = ModeGrid
@@ -216,14 +231,16 @@ func (m DashboardModel) handleCommand(cmd components.Command) (DashboardModel, t
 	case components.CmdNew:
 		// Clear all repos and start fresh
 		m.config.Repos = []config.Repo{}
+		m.config.ProfileName = ""
 		m.config.Save()
+		m.profileName = "" // Clear profile name
 
 		// Rebuild empty grid
 		m.grid = components.NewGrid(m.config.Repos)
 		m.grid = m.grid.SetSize(m.width, m.height-6)
 		m.commandInput = m.commandInput.SetRepos(m.config.Repos)
 		m.mode = ModeGrid
-		return m, nil
+		return m, m.setWindowTitle()
 
 	default:
 		m.mode = ModeGrid
@@ -241,12 +258,20 @@ func splitOwnerName(s string) []string {
 }
 
 func (m DashboardModel) View() string {
-	// Title
+	// Title with profile name
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("62")).
 		MarginBottom(1)
-	title := titleStyle.Render("ghflow - GitHub Workflow Dashboard")
+
+	titleText := "ghflow"
+	if m.profileName != "" {
+		profileStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("212")).
+			Bold(true)
+		titleText = "ghflow - " + profileStyle.Render(m.profileName)
+	}
+	title := titleStyle.Render(titleText)
 
 	// Grid
 	gridView := m.grid.View()
@@ -256,12 +281,17 @@ func (m DashboardModel) View() string {
 
 	// Help line when not in command mode
 	helpLine := ""
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	if m.mode == ModeGrid && m.grid.State == components.GridNavigating {
-		helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 		helpLine = helpStyle.Render("h/j/k/l: navigate | enter: focus | /: command | q: quit")
 	} else if m.mode == ModeGrid && m.grid.State == components.GridCardFocused {
-		helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-		helpLine = helpStyle.Render("j/k: scroll runs | esc: unfocus | q: quit")
+		// Check if we're viewing run details or run list
+		focusedCard := m.grid.SelectedCard()
+		if focusedCard != nil && focusedCard.State == components.CardRunDetail {
+			helpLine = helpStyle.Render("j/k: scroll jobs | esc: back to runs | q: quit")
+		} else {
+			helpLine = helpStyle.Render("j/k: scroll runs | enter: view details | esc: unfocus | q: quit")
+		}
 	}
 
 	return title + "\n" + gridView + "\n" + cmdView + "\n" + helpLine

@@ -106,8 +106,23 @@ func (g Grid) Update(msg tea.Msg) (Grid, tea.Cmd) {
 		}
 		return g, nil
 
+	case JobsFetchedMsg:
+		// Forward to focused card
+		if g.Cursor < len(g.Cards) {
+			var cmd tea.Cmd
+			g.Cards[g.Cursor], cmd = g.Cards[g.Cursor].Update(msg)
+			cmds = append(cmds, cmd)
+		}
+		return g, tea.Batch(cmds...)
+
 	case tea.KeyMsg:
 		if g.State == GridCardFocused {
+			// Check card state before update for Esc handling
+			cardStateBeforeUpdate := CardNormal
+			if g.Cursor < len(g.Cards) {
+				cardStateBeforeUpdate = g.Cards[g.Cursor].State
+			}
+
 			// Forward to focused card
 			if g.Cursor < len(g.Cards) {
 				var cmd tea.Cmd
@@ -115,8 +130,8 @@ func (g Grid) Update(msg tea.Msg) (Grid, tea.Cmd) {
 				cmds = append(cmds, cmd)
 			}
 
-			// Handle escape to unfocus
-			if msg.String() == "esc" {
+			// Handle escape to unfocus - only if card WAS in CardFocused state (not CardRunDetail)
+			if msg.String() == "esc" && cardStateBeforeUpdate == CardFocused {
 				g.State = GridNavigating
 				if g.Cursor < len(g.Cards) {
 					g.Cards[g.Cursor] = g.Cards[g.Cursor].SetState(CardSelected)
@@ -205,6 +220,13 @@ func (g Grid) RefreshAll() tea.Cmd {
 func (g Grid) SelectedRepo() *config.Repo {
 	if g.Cursor < len(g.Cards) {
 		return &g.Cards[g.Cursor].Repo
+	}
+	return nil
+}
+
+func (g Grid) SelectedCard() *Card {
+	if g.Cursor < len(g.Cards) {
+		return &g.Cards[g.Cursor]
 	}
 	return nil
 }

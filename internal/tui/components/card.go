@@ -18,18 +18,23 @@ const (
 	CardNormal CardState = iota
 	CardSelected
 	CardFocused
+	CardRunDetail
 )
 
 type Card struct {
-	Repo       config.Repo
-	Runs       []github.WorkflowRun
-	Status     github.RunStatus
-	Error      error
-	State      CardState
-	Width      int
-	Height     int
-	ScrollPos  int
-	RunCursor  int
+	Repo        config.Repo
+	Runs        []github.WorkflowRun
+	Status      github.RunStatus
+	Error       error
+	State       CardState
+	Width       int
+	Height      int
+	ScrollPos   int
+	RunCursor   int
+	DetailRun   *github.WorkflowRun
+	DetailJobs  []github.Job
+	JobCursor   int
+	LoadingJobs bool
 }
 
 func NewCard(repo config.Repo) Card {
@@ -46,42 +51,98 @@ func (c Card) SetSize(width, height int) Card {
 	return c
 }
 
+type JobsFetchedMsg struct {
+	CardIndex int
+	Jobs      []github.Job
+	Error     error
+}
+
 func (c Card) SetState(state CardState) Card {
 	c.State = state
-	if state != CardFocused {
+	if state != CardFocused && state != CardRunDetail {
 		c.RunCursor = 0
 		c.ScrollPos = 0
+		c.DetailRun = nil
+		c.DetailJobs = nil
+		c.JobCursor = 0
 	}
 	return c
 }
 
 func (c Card) Update(msg tea.Msg) (Card, tea.Cmd) {
-	if c.State != CardFocused {
-		return c, nil
-	}
-
 	switch msg := msg.(type) {
+	case JobsFetchedMsg:
+		c.LoadingJobs = false
+		c.DetailJobs = msg.Jobs
+		return c, nil
+
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "j", "down":
-			if c.RunCursor < len(c.Runs)-1 {
-				c.RunCursor++
-				visibleRuns := c.visibleRunCount()
-				if c.RunCursor >= c.ScrollPos+visibleRuns {
-					c.ScrollPos++
+		if c.State == CardRunDetail {
+			// In run detail view - navigate jobs
+			switch msg.String() {
+			case "j", "down":
+				if c.JobCursor < len(c.DetailJobs)-1 {
+					c.JobCursor++
+				}
+			case "k", "up":
+				if c.JobCursor > 0 {
+					c.JobCursor--
+				}
+			case "esc":
+				// Back to run list
+				c.State = CardFocused
+				c.DetailRun = nil
+				c.DetailJobs = nil
+				c.JobCursor = 0
+			}
+			return c, nil
+		}
+
+		if c.State == CardFocused {
+			// In run list - navigate runs
+			switch msg.String() {
+			case "j", "down":
+				if c.RunCursor < len(c.Runs)-1 {
+					c.RunCursor++
+					visibleRuns := c.visibleRunCount()
+					if c.RunCursor >= c.ScrollPos+visibleRuns {
+						c.ScrollPos++
+					}
+				}
+			case "k", "up":
+				if c.RunCursor > 0 {
+					c.RunCursor--
+					if c.RunCursor < c.ScrollPos {
+						c.ScrollPos--
+					}
+				}
+			case "enter":
+				if c.RunCursor < len(c.Runs) {
+					run := c.Runs[c.RunCursor]
+					c.State = CardRunDetail
+					c.DetailRun = &run
+					c.LoadingJobs = true
+					c.JobCursor = 0
+					return c, c.fetchJobs(run.ID)
 				}
 			}
-		case "k", "up":
-			if c.RunCursor > 0 {
-				c.RunCursor--
-				if c.RunCursor < c.ScrollPos {
-					c.ScrollPos--
-				}
-			}
+			return c, nil
 		}
 	}
 
 	return c, nil
+}
+
+func (c Card) fetchJobs(runID int64) tea.Cmd {
+	owner := c.Repo.Owner
+	name := c.Repo.Name
+	return func() tea.Msg {
+		jobs, err := github.FetchRunJobs(owner, name, runID)
+		return JobsFetchedMsg{
+			Jobs:  jobs,
+			Error: err,
+		}
+	}
 }
 
 func (c Card) visibleRunCount() int {
@@ -99,7 +160,7 @@ func (c Card) View() string {
 	var borderStyle lipgloss.Border
 
 	switch c.State {
-	case CardFocused:
+	case CardFocused, CardRunDetail:
 		borderColor = lipgloss.Color("62") // Purple
 		borderStyle = lipgloss.ThickBorder()
 	case CardSelected:
@@ -117,7 +178,12 @@ func (c Card) View() string {
 		Height(c.Height - 2).
 		Padding(0, 1)
 
-	content := c.renderContent()
+	var content string
+	if c.State == CardRunDetail {
+		content = c.renderRunDetail()
+	} else {
+		content = c.renderContent()
+	}
 	return cardStyle.Render(content)
 }
 
@@ -146,8 +212,8 @@ func (c Card) renderContent() string {
 	nameStyle := lipgloss.NewStyle().Bold(true)
 	b.WriteString(nameStyle.Render(repoName) + "\n")
 
-	// Status line
-	statusIcon := c.statusIcon()
+	// Status line - use a dot indicator instead of [ok] to differentiate from run entries
+	statusDot := c.statusDot()
 	branch := ""
 	if len(c.Runs) > 0 {
 		branch = c.Runs[0].HeadBranch
@@ -155,7 +221,8 @@ func (c Card) renderContent() string {
 			branch = branch[:12] + "..."
 		}
 	}
-	statusLine := fmt.Sprintf("%s %s", statusIcon, branch)
+	branchStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	statusLine := fmt.Sprintf("%s %s", statusDot, branchStyle.Render(branch))
 	b.WriteString(statusLine + "\n")
 
 	// Divider
@@ -245,6 +312,23 @@ func (c Card) statusIcon() string {
 	return runStatusIcon(c.Status)
 }
 
+func (c Card) statusDot() string {
+	switch c.Status {
+	case github.StatusSuccess:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("●")
+	case github.StatusFailure:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("●")
+	case github.StatusInProgress:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("●")
+	case github.StatusPending:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("247")).Render("●")
+	case github.StatusCancelled:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("●")
+	default:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("○")
+	}
+}
+
 func runStatusIcon(status github.RunStatus) string {
 	switch status {
 	case github.StatusSuccess:
@@ -278,4 +362,99 @@ func formatTimeAgo(t time.Time) string {
 	}
 	days := int(diff.Hours() / 24)
 	return fmt.Sprintf("%dd", days)
+}
+
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+}
+
+func (c Card) renderRunDetail() string {
+	var b strings.Builder
+
+	width := c.Width
+	if width < 20 {
+		width = 20
+	}
+
+	if c.DetailRun == nil {
+		return "No run selected"
+	}
+
+	run := c.DetailRun
+
+	// Header: workflow name and run number
+	headerStyle := lipgloss.NewStyle().Bold(true)
+	workflowName := run.WorkflowName
+	if workflowName == "" {
+		workflowName = run.Name
+	}
+	b.WriteString(headerStyle.Render(fmt.Sprintf("#%d %s", run.RunNumber, workflowName)) + "\n")
+
+	// Status and branch
+	statusIcon := runStatusIcon(run.RunStatus())
+	branchStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
+	b.WriteString(fmt.Sprintf("%s %s %s\n", statusIcon, branchStyle.Render(run.HeadBranch), formatTimeAgo(run.CreatedAt)))
+
+	// Divider
+	dividerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	dividerWidth := width - 4
+	if dividerWidth < 1 {
+		dividerWidth = 1
+	}
+	b.WriteString(dividerStyle.Render(strings.Repeat("─", dividerWidth)) + "\n")
+
+	// Jobs header
+	jobsHeader := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Jobs:")
+	b.WriteString(jobsHeader + "\n")
+
+	if c.LoadingJobs {
+		loadStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+		b.WriteString(loadStyle.Render("Loading...") + "\n")
+	} else if len(c.DetailJobs) == 0 {
+		dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+		b.WriteString(dimStyle.Render("No jobs") + "\n")
+	} else {
+		for i, job := range c.DetailJobs {
+			line := c.renderJobLine(job, i == c.JobCursor)
+			b.WriteString(line + "\n")
+		}
+	}
+
+	// Help line
+	b.WriteString("\n")
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	b.WriteString(helpStyle.Render("esc: back"))
+
+	return b.String()
+}
+
+func (c Card) renderJobLine(job github.Job, selected bool) string {
+	icon := runStatusIcon(job.JobStatus())
+
+	name := job.Name
+	maxNameLen := c.Width - 20
+	if maxNameLen < 10 {
+		maxNameLen = 10
+	}
+	if len(name) > maxNameLen {
+		name = name[:maxNameLen-3] + "..."
+	}
+
+	duration := ""
+	if d := job.Duration(); d > 0 {
+		duration = formatDuration(d)
+	}
+
+	line := fmt.Sprintf("%s %s %s", icon, name, duration)
+
+	if selected {
+		return lipgloss.NewStyle().Bold(true).Reverse(true).Render(line)
+	}
+	return line
 }

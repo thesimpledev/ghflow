@@ -15,7 +15,8 @@ type Repo struct {
 }
 
 type Config struct {
-	Repos []Repo `json:"repos"`
+	Repos       []Repo `json:"repos"`
+	ProfileName string `json:"profile_name,omitempty"`
 }
 
 func configDir() (string, error) {
