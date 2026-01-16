@@ -1,3 +1,5 @@
+<div align="center">
+
 # ghflow
 
 ```
@@ -9,7 +11,9 @@
   \_____|_|  |_|_|    |______\____/   \/  \/
 ```
 
-> A terminal dashboard for monitoring GitHub Actions workflows across multiple repositories.
+**A terminal dashboard for monitoring GitHub Actions workflows across multiple repositories.**
+
+</div>
 
 [![Built with Claude](https://img.shields.io/badge/Built%20with-Claude%20Code-blueviolet?style=flat-square)](https://claude.ai)
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square&logo=go)](https://go.dev)

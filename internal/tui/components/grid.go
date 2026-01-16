@@ -43,16 +43,16 @@ func NewGrid(repos []config.Repo) Grid {
 		cards[i] = NewCard(repo)
 	}
 
-	g := Grid{
-		Cards:  cards,
-		State:  GridNavigating,
-	}
-
+	// Set first card as selected
 	if len(cards) > 0 {
 		cards[0] = cards[0].SetState(CardSelected)
 	}
 
-	return g
+	return Grid{
+		Cards:  cards,
+		State:  GridNavigating,
+		Cursor: 0,
+	}
 }
 
 func (g Grid) SetSize(width, height int) Grid {
