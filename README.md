@@ -33,20 +33,50 @@
 
 ## Installation
 
+### Prerequisites
+
+ghflow requires the [GitHub CLI](https://cli.github.com) for API authentication:
+
+```bash
+# macOS
+brew install gh
+
+# Linux (Debian/Ubuntu)
+sudo apt install gh
+
+# Then authenticate
+gh auth login
+```
+
+### Install with Go
+
+```bash
+go install github.com/thesimpledev/ghflow@latest
+```
+
+Make sure `~/go/bin` is in your PATH:
+
+```bash
+export PATH=$PATH:$(go env GOPATH)/bin
+```
+
+### Install from Source
+
 ```bash
 git clone https://github.com/thesimpledev/ghflow.git
 cd ghflow
 go build -o ghflow .
-
-# Requires GitHub CLI
-brew install gh
-gh auth login
+sudo mv ghflow /usr/local/bin/  # optional: install system-wide
 ```
+
+### Download Binary
+
+Pre-built binaries are available on the [Releases](https://github.com/thesimpledev/ghflow/releases) page.
 
 ## Usage
 
 ```bash
-./ghflow
+ghflow
 ```
 
 ### Navigation
