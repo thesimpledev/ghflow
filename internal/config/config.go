@@ -2,8 +2,10 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 )
 
 const appName = "ghflow"
@@ -45,7 +47,7 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- path is derived from XDG_CONFIG_HOME/home dir, not user input
 	if os.IsNotExist(err) {
 		return &Config{Repos: []Repo{}}, nil
 	}
@@ -67,7 +69,7 @@ func (c *Config) Save() error {
 		return err
 	}
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 
@@ -81,7 +83,7 @@ func (c *Config) Save() error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }
 
 func (c *Config) AddRepo(repo Repo) {
@@ -104,6 +106,17 @@ func (c *Config) RemoveRepo(owner, name string) {
 
 // Profile support
 
+var validProfileName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// checkProfileName rejects names that could escape the profiles
+// directory (path separators, "..", hidden files, etc).
+func checkProfileName(name string) error {
+	if !validProfileName.MatchString(name) {
+		return fmt.Errorf("invalid profile name %q: only letters, digits, hyphens, and underscores are allowed", name)
+	}
+	return nil
+}
+
 func profilesDir() (string, error) {
 	dir, err := configDir()
 	if err != nil {
@@ -113,12 +126,16 @@ func profilesDir() (string, error) {
 }
 
 func (c *Config) SaveProfile(name string) error {
+	if err := checkProfileName(name); err != nil {
+		return err
+	}
+
 	dir, err := profilesDir()
 	if err != nil {
 		return err
 	}
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 
@@ -128,17 +145,21 @@ func (c *Config) SaveProfile(name string) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }
 
 func LoadProfile(name string) (*Config, error) {
+	if err := checkProfileName(name); err != nil {
+		return nil, err
+	}
+
 	dir, err := profilesDir()
 	if err != nil {
 		return nil, err
 	}
 
 	path := filepath.Join(dir, name+".json")
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- name is validated by checkProfileName, path stays inside profilesDir
 	if err != nil {
 		return nil, err
 	}

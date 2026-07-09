@@ -28,7 +28,7 @@ func GetRepoInfo(path string) (*RepoInfo, error) {
 		return nil, nil
 	}
 
-	cmd := exec.Command("git", "-C", path, "remote", "get-url", "origin")
+	cmd := exec.Command("git", "-C", path, "remote", "get-url", "origin") // #nosec G204 -- fixed binary, path is passed as an argument (no shell); worst case git reads a directory the user already controls
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err

@@ -144,6 +144,8 @@ func (m DashboardModel) Update(msg tea.Msg) (DashboardModel, tea.Cmd) {
 }
 
 func (m DashboardModel) handleCommand(cmd components.Command) (DashboardModel, tea.Cmd) {
+	m.err = nil
+
 	switch cmd.Type {
 	case components.CmdQuit:
 		return m, tea.Quit
@@ -167,7 +169,9 @@ func (m DashboardModel) handleCommand(cmd components.Command) (DashboardModel, t
 				Name:  info.Name,
 			}
 			m.config.AddRepo(newRepo)
-			m.config.Save()
+			if err := m.config.Save(); err != nil {
+				m.err = err
+			}
 
 			// Rebuild grid with new repo
 			m.grid = components.NewGrid(m.config.Repos)
@@ -186,7 +190,9 @@ func (m DashboardModel) handleCommand(cmd components.Command) (DashboardModel, t
 			parts := splitOwnerName(cmd.Arg)
 			if len(parts) == 2 {
 				m.config.RemoveRepo(parts[0], parts[1])
-				m.config.Save()
+				if err := m.config.Save(); err != nil {
+					m.err = err
+				}
 
 				// Rebuild grid without removed repo
 				m.grid = components.NewGrid(m.config.Repos)
@@ -199,10 +205,16 @@ func (m DashboardModel) handleCommand(cmd components.Command) (DashboardModel, t
 
 	case components.CmdSave:
 		if cmd.Arg != "" {
-			m.config.SaveProfile(cmd.Arg)
+			if err := m.config.SaveProfile(cmd.Arg); err != nil {
+				m.err = err
+				m.mode = ModeGrid
+				return m, nil
+			}
 			m.profileName = cmd.Arg
 			m.config.ProfileName = cmd.Arg
-			m.config.Save()
+			if err := m.config.Save(); err != nil {
+				m.err = err
+			}
 		}
 		m.mode = ModeGrid
 		return m, m.setWindowTitle()
@@ -210,11 +222,17 @@ func (m DashboardModel) handleCommand(cmd components.Command) (DashboardModel, t
 	case components.CmdLoad:
 		if cmd.Arg != "" {
 			loadedCfg, err := config.LoadProfile(cmd.Arg)
+			if err != nil {
+				m.err = err
+			}
 			if err == nil && loadedCfg != nil {
 				// Replace current config with loaded profile
 				m.config.Repos = loadedCfg.Repos
 				m.config.ProfileName = cmd.Arg
-				m.config.Save() // Save as current config too
+				// Save as current config too
+				if err := m.config.Save(); err != nil {
+					m.err = err
+				}
 				m.profileName = cmd.Arg
 
 				// Rebuild grid with loaded repos
@@ -232,7 +250,9 @@ func (m DashboardModel) handleCommand(cmd components.Command) (DashboardModel, t
 		// Clear all repos and start fresh
 		m.config.Repos = []config.Repo{}
 		m.config.ProfileName = ""
-		m.config.Save()
+		if err := m.config.Save(); err != nil {
+			m.err = err
+		}
 		m.profileName = "" // Clear profile name
 
 		// Rebuild empty grid
@@ -282,7 +302,10 @@ func (m DashboardModel) View() string {
 	// Help line when not in command mode
 	helpLine := ""
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	if m.mode == ModeGrid && m.grid.State == components.GridNavigating {
+	if m.err != nil {
+		errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+		helpLine = errStyle.Render("error: " + m.err.Error())
+	} else if m.mode == ModeGrid && m.grid.State == components.GridNavigating {
 		helpLine = helpStyle.Render("h/j/k/l: navigate | enter: focus | /: command | q: quit")
 	} else if m.mode == ModeGrid && m.grid.State == components.GridCardFocused {
 		// Check if we're viewing run details or run list
